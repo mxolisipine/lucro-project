@@ -240,13 +240,3 @@ Can be replaced with:
 No architecture changes needed.
 
 ---
-
-# 🎬 **Video Demo**
-
-Record a 5–10 minute Loom video covering:
-
-* Project architecture
-* API ingestion
-* Celery processing
-* BI summary endpoint
-* Code walkthrough
