@@ -3,29 +3,54 @@ from celery import shared_task, Task
 from .models import Batch, Transaction
 from .categorizer import RuleBasedCategorizer
 from django.db import transaction as db_transaction
-from middleware.observability import generate_correlation_id
+from project.settings import set_correlation_id, get_correlation_id
+logger = logging.getLogger("")
+task_logger = logging.getLogger("observability.tasks")
 
-logger = logging.getLogger("tasks")
+class ObservabilityTask(Task):
+    abstract = True
 
+    def __call__(self, *args, **kwargs):
+        self._start = time.time()
 
-class ObservedTask(Task):
-    """Base task that ensures correlation ID is passed in context."""
-    def on_failure(self, exc, task_id, args, kwargs, einfo):
-        correlation_id = kwargs.get("correlation_id", "unknown")
-        logger.exception(
-            "task_failed",
+        # Use incoming correlation ID, else generate one
+        cid = getattr(self.request, "correlation_id", None)
+        set_correlation_id(cid)
+
+        return super().__call__(*args, **kwargs)
+
+    def on_success(self, retval, task_id, args, kwargs):
+        duration = time.time() - self._start
+
+        task_logger.info(
+            f"{self.name} completed",
             extra={
-                "correlation_id": correlation_id,
+                "correlation_id": get_correlation_id(),
+                "task_name": self.name,
                 "task_id": task_id,
-                "args": args,
-                "kwargs": kwargs,
-                "error": str(exc),
-            }
+                "queue": self.request.delivery_info.get("routing_key"),
+                "retries": self.request.retries,
+                "duration_sec": f"{duration:.4f}",
+            },
         )
-        super().on_failure(exc, task_id, args, kwargs, einfo)
+
+    def on_failure(self, exc, task_id, args, kwargs, einfo):
+        duration = time.time() - self._start
+
+        task_logger.error(
+            f"{self.name} failed: {exc}",
+            extra={
+                "correlation_id": get_correlation_id(),
+                "task_name": self.name,
+                "task_id": task_id,
+                "queue": self.request.delivery_info.get("routing_key"),
+                "retries": self.request.retries,
+                "duration_sec": f"{duration:.4f}",
+            },
+        )
 
 
-@shared_task(bind=True, base=ObservedTask, max_retries=3, default_retry_delay=10)
+@shared_task(bind=True, base=ObservabilityTask, max_retries=3, default_retry_delay=10)
 def process_batch_enrichment(self, batch_id_str, correlation_id=None):
     correlation_id = correlation_id or self.request.id or generate_correlation_id()
     task_start = time.time()

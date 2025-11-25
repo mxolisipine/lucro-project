@@ -352,7 +352,7 @@ Structured logs with:
 
 ### **Tracing**
 
-If using OpenTelemetry:
+If using OTEL:
 
 * trace ingestion → database → celery → DB writeback
 
